@@ -1,0 +1,98 @@
+---
+- name: Create
+  hosts: localhost
+#  connection: local
+  gather_facts: false
+#  no_log: "{{ molecule_no_log }}"
+
+  vars:
+    keypair_path: "{{ lookup('env', 'MOLECULE_EPHEMERAL_DIRECTORY') }}/ssh_key"
+
+  tasks:
+    - name: Create Workload Partition(s)
+      command:
+        cmd: >
+          mkwpar -s
+              -n {{ item.wpar_name | default(item.name) }}
+              {% if (item.copy_name_resolution | default(true) | bool) %}-r{% endif %}
+              {% if (item.isWritable | default(false) | bool) %}-l{% endif -%}
+              {% if (item.wpar_copy_rootvg | default(false) | bool) %}-t{% endif %}
+              {% if item.wpar_vg is defined -%}
+                -g {{ item.wpar_vg }}
+              {%- endif %}
+              {% if item.wpar_rootvg is defined -%}
+                -D rootvg=yes devname={{ item.wpar_rootvg }}
+                {% if item.wpar_rootvg_clobber | default(false) | bool %}
+                  -O
+                {%- endif %}
+              {%- endif %}
+        creates: "/wpars/{{ item.wpar_name | default(item.name, true) }}"
+      delegate_to: "{{ item.aix_host | default('localhost', true) }}"
+      remote_user: "{{ item.aix_user | default('root', true) }}"
+      with_items: "{{ molecule_yml.platforms }}"
+      register: server
+
+    - name: Generate SSH Keys for WPARs
+      openssh_keypair:
+        path: "{{ keypair_path }}"
+        comment: "molecule@"
+
+    ## FIXME: path needs to change based on wpar_user; this only works for root.
+    - name: Add our key to authorized_keys
+      authorized_key:
+        user: "{{ item.wpar_user | default('root') }}"
+        state: present
+        key: "{{ lookup('file', keypair_path + '.pub') }}"
+        path: "/wpars/{{ item.wpar_name | default(item.name) }}/.ssh/authorized_keys"
+        manage_dir: True
+      delegate_to: "{{ item.aix_host | default('localhost', true) }}"
+      remote_user: "{{ item.aix_user | default('root', true) }}"
+      with_items: "{{ molecule_yml.platforms }}"
+
+    - name: Probe for SSH on WPARs
+      wait_for:
+        port: "{{ item.wpar_port | default('22') }}"
+        host: "{{ item.wpar_name | default(item.name, true) }}"
+        search_regex: SSH
+        timeout: 600
+      loop: "{{ molecule_yml.platforms }}"
+      register: _ssh_probes
+      async: 600
+      poll: 0
+
+    - name: Wait for SSH on WPARs
+      async_status:
+        jid: "{{ item.ansible_job_id }}"
+      register: _ssh_status
+      until: _ssh_status.finished
+      retries: 30
+      loop: "{{ _ssh_probes.results }}"    
+
+
+    ##
+    ## Mandatory configuration for Molecule to function.
+    ##
+
+    - name: Populate instance config dict
+      set_fact:
+        instance_conf_dict: {
+          'instance': "{{ item.name }}",
+          'address': "{{ item.wpar_name | default(item.name, true) }}",
+          'user': "{{ item.wpar_user | default('root') }}",
+          'port': "{{ item.wpar_port | default('22') }}",
+          'identity_file': "{{ keypair_path }}",
+      }
+      with_items: "{{ molecule_yml.platforms }}"
+      register: instance_config_dict
+      when: server.changed | bool
+
+    - name: Convert instance config dict to a list
+      set_fact:
+        instance_conf: "{{ instance_config_dict.results | map(attribute='ansible_facts.instance_conf_dict') | list }}"
+      when: server.changed | bool
+
+    - name: Dump instance config
+      copy:
+        content: "{{ instance_conf | to_json | from_json | molecule_to_yaml | molecule_header }}"
+        dest: "{{ molecule_instance_config }}"
+      when: server.changed | bool

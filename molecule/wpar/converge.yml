@@ -1,0 +1,7 @@
+---
+- name: Converge
+  hosts: all
+  tasks:
+    - name: "Include techu-demo-molecule"
+      include_role:
+        name: "techu-demo-molecule"

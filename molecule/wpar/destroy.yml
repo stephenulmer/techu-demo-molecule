@@ -1,0 +1,26 @@
+---
+- name: Destroy
+  hosts: localhost
+#  connection: local
+  gather_facts: false
+#  no_log: "{{ molecule_no_log }}"
+
+  tasks:
+    - name: Destroy WPAR(s)
+      command:
+        cmd: "rmwpar -F {{ item.wpar_name | default(item.name, true) }}"
+        removes: "/wpars/{{ item.wpar_name | default(item.name, true) }}"
+      delegate_to: "{{ item.aix_host }}"
+      remote_user: "{{ item.aix_user | default('root', true) }}"
+      with_items: "{{ molecule_yml.platforms }}"
+      register: server
+
+    - name: Populate instance config
+      set_fact:
+        instance_conf: {}
+
+    - name: Dump instance config
+      copy:
+        content: "{{ instance_conf | to_json | from_json | molecule_to_yaml | molecule_header }}"
+        dest: "{{ molecule_instance_config }}"
+      when: server.changed | bool

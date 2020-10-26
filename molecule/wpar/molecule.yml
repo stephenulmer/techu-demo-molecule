@@ -1,0 +1,23 @@
+---
+dependency:
+  name: galaxy
+driver:
+  name: delegated
+platforms:
+  - name: wpar01
+    aix_host: aix02
+    wpar_name: wpar01
+    wpar_rootvg: hdisk1
+    wpar_rootvg_clobber: True
+    isWritable: false
+    copy_name_resolution: False
+  - name: wpar02
+    aix_host: aix02
+    wpar_name: wpar02
+    wpar_vg: rootvg
+    wpar_copy_rootvg: True
+provisioner:
+  name: ansible
+verifier:
+  name: ansible
+  enabled: False
